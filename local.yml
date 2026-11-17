@@ -67,11 +67,17 @@
         path: /etc/cron.d/cache-warm
         state: absent
 
-    - name: Stop and disable rogue telnet service
+    - name: Check whether the rogue telnet unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/telnet.service
+      register: telnet_unit
+
+    - name: Stop and disable rogue telnet service when present
       ansible.builtin.systemd_service:
         name: telnet
         state: stopped
         enabled: false
+      when: telnet_unit.stat.exists
 
     - name: Remove rogue telnet systemd unit and drop-in directory
       ansible.builtin.file:
@@ -158,20 +164,20 @@
         name: python3-pymysql
         state: present
 
-    - name: Ensure webapp has only its required ticketdb privileges
+    - name: Ensure webapp has only ticketdb application privileges
       community.mysql.mysql_user:
         name: webapp
         host: "%"
-        priv: "ticketdb.*:SELECT,INSERT,UPDATE,DELETE"
+        priv: "*.*:USAGE/ticketdb.*:SELECT,INSERT,UPDATE,DELETE"
         append_privs: false
         state: present
         login_unix_socket: /var/run/mysqld/mysqld.sock
 
-    - name: Ensure reporting has read-only ticketdb privileges
+    - name: Ensure reporting has only ticketdb read privileges
       community.mysql.mysql_user:
         name: reporting
         host: "%"
-        priv: "ticketdb.*:SELECT"
+        priv: "*.*:USAGE/ticketdb.*:SELECT"
         append_privs: false
         state: present
         login_unix_socket: /var/run/mysqld/mysqld.sock
