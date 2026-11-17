@@ -1,0 +1,191 @@
+---
+- name: Project 2 hardening
+  hosts: localhost
+  connection: local
+  become: true
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+  tasks:
+    # Domain A — System / SSH
+    - name: Ensure ca-certificates is installed
+      ansible.builtin.package:
+        name: ca-certificates
+        state: present
+
+    - name: Disable SSH root login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config.d/99-course.conf
+        regexp: '^\s*PermitRootLogin\s+'
+        line: 'PermitRootLogin no'
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart SSH
+
+    - name: Disable SSH password authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config.d/99-course.conf
+        regexp: '^\s*PasswordAuthentication\s+'
+        line: 'PasswordAuthentication no'
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart SSH
+
+    - name: Set UFW default incoming policy to deny
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Set UFW default outgoing policy to allow
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+
+    - name: Allow SSH through UFW
+      community.general.ufw:
+        rule: allow
+        name: OpenSSH
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+
+    - name: Remove unauthorized cron job
+      ansible.builtin.file:
+        path: /etc/cron.d/cache-warm
+        state: absent
+
+    - name: Stop and disable rogue telnet service
+      ansible.builtin.systemd_service:
+        name: telnet
+        state: stopped
+        enabled: false
+
+    - name: Remove rogue telnet systemd unit and drop-in directory
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/telnet.service
+        - /etc/systemd/system/telnet.service.d
+      notify: Reload systemd
+
+    - name: Remove unnecessary telnet package if installed
+      ansible.builtin.package:
+        name: telnet
+        state: absent
+
+    - name: Install Fail2ban
+      ansible.builtin.package:
+        name: fail2ban
+        state: present
+
+    - name: Configure Fail2ban SSH jail
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.d/sshd.local
+        content: |
+          [sshd]
+          enabled = true
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Ensure Fail2ban is enabled and running
+      ansible.builtin.service:
+        name: fail2ban
+        state: started
+        enabled: true
+
+    - name: Secure world-writable application directory
+      ansible.builtin.file:
+        path: /var/www/app/tmp
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Domain B — Users / privilege escalation
+    - name: Remove unauthorized sudo account
+      ansible.builtin.user:
+        name: sysupdate
+        state: absent
+        remove: true
+        force: true
+
+    - name: Remove course passwordless sudo rule
+      ansible.builtin.file:
+        path: /etc/sudoers.d/90-course-nopasswd
+        state: absent
+
+    - name: Remove unexpected SUID-root binary
+      ansible.builtin.file:
+        path: /usr/local/bin/netcheck
+        state: absent
+
+    - name: Remove SUID binary audit note
+      ansible.builtin.file:
+        path: /usr/local/bin/netcheck.note
+        state: absent
+
+    - name: Lock account with blank password
+      ansible.builtin.user:
+        name: demo
+        password_lock: true
+
+    - name: Restrict database credentials file
+      ansible.builtin.file:
+        path: /opt/billing/db.conf
+        state: file
+        owner: root
+        group: root
+        mode: "0600"
+
+    # Domain C — Database least privilege
+    - name: Install MySQL Python driver
+      ansible.builtin.package:
+        name: python3-pymysql
+        state: present
+
+    - name: Ensure webapp has only its required ticketdb privileges
+      community.mysql.mysql_user:
+        name: webapp
+        host: "%"
+        priv: "ticketdb.*:SELECT,INSERT,UPDATE,DELETE"
+        append_privs: false
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Ensure reporting has read-only ticketdb privileges
+      community.mysql.mysql_user:
+        name: reporting
+        host: "%"
+        priv: "ticketdb.*:SELECT"
+        append_privs: false
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Remove remote MySQL root account
+      community.mysql.mysql_user:
+        name: root
+        host: "%"
+        state: absent
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Remove anonymous MySQL localhost account
+      community.mysql.mysql_user:
+        name: ""
+        host: localhost
+        state: absent
+        login_unix_socket: /var/run/mysqld/mysqld.sock
