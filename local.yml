@@ -139,7 +139,7 @@
     - name: Remove cloud-init passwordless sudo rule while preserving the file
       ansible.builtin.lineinfile:
         path: /etc/sudoers.d/90-cloud-init-users
-        regexp: '^ubuntu\\s+ALL=\\(ALL\\)\\s+NOPASSWD:'
+        regexp: '^ubuntu\s+ALL=\(ALL\)\s+NOPASSWD:'
         state: absent
         validate: '/usr/sbin/visudo -cf %s'
 
